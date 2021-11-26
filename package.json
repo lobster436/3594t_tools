@@ -1,0 +1,21 @@
+{
+  "name": "3594t_tools",
+  "version": "1.0.0",
+  "description": "Bookmarklet",
+  "scripts": {
+    "build": "mkdir -p build && echo '(async function() {' > build/main.js && node src/builder/encript.js >> build/main.js && cat src/bookmarklet/main.js >> build/main.js && echo '})()' >> build/main.js && javascript-obfuscator build/main.js -o public/bookmarklet/main.js --identifier-names-generator mangled --string-array-encoding rc4 --unicode-escape-sequence true --self-defending true --string-array-threshold 1 --transform-object-keys true --disable-console-output true"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/behiro/3594t_tools.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/behiro/3594t_tools/issues"
+  },
+  "homepage": "https://github.com/behiro/3594t_tools#readme",
+  "dependencies": {
+    "javascript-obfuscator": "^3.0.0"
+  }
+}
