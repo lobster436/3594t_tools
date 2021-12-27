@@ -31,31 +31,45 @@ async function main() {
   }
   _3594t_tools_running = true;
   let result = 0;
-  const hideLoading = showLoading();
+  const loading = showLoading();
   try {
+    // 対戦履歴（日付選択）
+    if (location.href === "https://3594t.net/members/history/") {
+      result = await importBattleAllDays(loading);
+    }
     // 対戦履歴
     if (location.href.startsWith("https://3594t.net/members/history/daily")) {
-      result = await importBattle();
+      result = await importBattle(loading);
+      if (window !== parent) {
+        result = false;
+      }
     }
     // データリスト
     if (location.href.startsWith("https://3594t.net/datalist/")) {
-      result = await importWarlord();
+      result = await importWarlord(loading);
     }
   } finally {
     _3594t_tools_running = false;
-    hideLoading();
+    loading();
   }
   return result;
 }
 
 function showLoading() {
-  const img = document.createElement('img');
-  img.src = "https://www.benricho.org/loading_images/img-size/loading-l-17.gif";
-  img.style = "position: fixed; top: calc(50% - 40px); left: calc(50% - 40px); height: 80px; width: 80px; z-index: 100;";
-  document.body.appendChild(img);
+  const div = document.createElement('div');
+  div.style = "position: fixed; top: calc(50% - 50px); left: calc(50% - 90px); height: 100px; width: 180px; z-index: 100;";
+  div.innerHTML = `
+    <img style="height: 80px; width: 80px;" src="https://www.benricho.org/loading_images/img-size/loading-l-17.gif">
+    <div><p id="loadingContent" style="margin: 0; background-color: blue; color: white; font-weight: 600;"></p></div>
+  `;
+  document.body.appendChild(div);
 
-  return () => {
-    document.body.removeChild(img);
+  return (content) => {
+    if (content) {
+      document.getElementById("loadingContent").innerText = content;
+    } else {
+      document.body.removeChild(div);
+    }
   };
 }
 
@@ -125,24 +139,126 @@ async function importWarlord() {
   return newList.length + changeList.length;
 }
 
+async function importBattleAllDays(loading) {
+  log("Start importBattleAllDays()");
+
+  const dailyUrlList = findElements(document, "//td[contains(@class,'play_day')]//a").map(e => e.href);
+  log("URL " + JSON.stringify(dailyUrlList));
+
+  const now = Date.now();
+
+  let progress = dailyUrlList.length;
+  for (let url of dailyUrlList) {
+    loading(`残り ${progress}日 処理中`);
+
+    const iframe = document.createElement('iframe');
+    iframe.src = url;
+    iframe.style = [
+      'width: 640px',
+      'height: 100%',
+      'position: fixed',
+      'top: 0',
+      'left: calc(100vw - 640px)',
+      'z-index: 2',
+    ].join(";");
+    document.body.appendChild(iframe);
+    await sleep(3000);
+
+    const contentDocument = iframe.contentDocument || iframe.contentWindow.document;
+    const script = contentDocument.createElement('script');
+    script.src = 'https://behiro.github.io/3594t_tools/bookmarklet/main.js?_=' + now;
+    contentDocument.body.appendChild(script);
+  
+    await sleep(3000);
+    while (iframe.contentWindow._3594t_tools_running) {
+      await sleep(1000);
+    }
+    document.body.removeChild(iframe);
+    progress--;
+  }
+
+  return true;
+}
+
 // 対戦データを取り込む
-async function importBattle() {
+async function importBattle(loading) {
   log("Start importBattle()");
+  loading(`対戦データ　確認中`);
   
   // Webページから情報収集
   const date = findElement(document, "//*[@id='header_r']//h2").textContent.replace(/^[^(]+|[()]/g,'');
-  const blockBattleList = findElements(document, "//*[contains(@class,'block_battle_list')]");
+
+  // 最初のページへ移動
+  const topPageLink = findElement(document, "//*[@class='btn_pager_top']//a");
+  if (topPageLink.click) {
+    topPageLink.click();
+    await sleep(1000);
+  }
+
+  let blockBattleDataList = [];
+  while (true) {
+    // 対戦を取得
+    const blockBattleList = findElements(document, "//*[contains(@class,'block_battle_list')]");
+    const dataList = blockBattleList.map(blockBattle => {
+      const time = findElement(blockBattle, ".//*[contains(@class,'battle_list_time')]").textContent;
+      const datetime = new Date(Date.parse(`${date} ${time.replace(/翌/,"")}`));
+      if (time.startsWith("翌")) {
+        datetime.setDate(datetime.getDate() + 1);
+      }
+      const datetimeString = datetime.toLocaleString().replace(/[ /:]/g,'');
+
+      const myname = findElement(blockBattle, ".//*[contains(@class,'battle_list_mydata')]//*[contains(@class,'battle_list_name')]//span").textContent;
+      const enemyname = findElement(blockBattle, ".//*[contains(@class,'battle_list_enemydata')]//*[contains(@class,'battle_list_name')]//span").textContent;
+
+      return {
+        time,
+        datetime,
+        myid: myname + datetimeString,
+        myname,
+        myleague: findElement(blockBattle, ".//*[contains(@class,'battle_list_mydata')]//*[contains(@class,'battle_list_league')]//img").alt,
+        enemyid: enemyname + datetimeString,
+        enemyname,
+        enemyleague: findElement(blockBattle, ".//*[contains(@class,'battle_list_enemydata')]//*[contains(@class,'battle_list_league')]//img").alt,
+        isWin: findElement(blockBattle, ".//*[contains(@class,'battle_list_result')]//img").src.endsWith('icon_1_s.png'),
+        battleUrl: findElement(blockBattle, ".//a[contains(@class,'battle_list_base')]").href,
+      };
+    });
+    blockBattleDataList = [...blockBattleDataList, ...dataList];
+  
+    // 次のページがあれば移動
+    const nextPageLink = findElement(document, "//*[@class='btn_pager_next']//a");
+    if (!nextPageLink.click) {
+      break;
+    }
+    nextPageLink.click();
+    await sleep(1000);
+  }
+
+  // 対戦の既存データを取得
+  let battleRecords = await getRecords("対戦", "対戦ID", blockBattleDataList.map(e => e.myid));
+  let battleRecordIdList = Object.values(battleRecords).map(e => e["対戦ID"]);
+  // 対戦が存在するものはスキップ
+  blockBattleDataList = blockBattleDataList.filter(e => !battleRecordIdList.includes(e.myid));
+  
+  if (blockBattleDataList.length === 0) {
+    log("End importBattle() imported already.");
+    return 0;
+  }
+  loading(`対戦 ${blockBattleDataList.length}件 取得中`);
 
   let battleList = [];
   let cardMap = {};
   let warlordIdList = [];
-  for (let blockBattle of blockBattleList) {
-    const battleInfo = await collectBattleInfo(blockBattle, date);
+  for (let blockBattleData of blockBattleDataList) {
+    await sleep(3000);
+    const battleInfo = await collectBattleInfo(date, blockBattleData);
     log("battleInfo", battleInfo);
 
     battleList = battleList.concat(battleInfo.battleList);
     cardMap = Object.assign(cardMap, battleInfo.cardMap);
     warlordIdList = warlordIdList.concat(battleInfo.warlordIdList);
+
+    loading(`対戦 ${blockBattleDataList.length - battleList.length/2}件 取得中`);
   }
   warlordIdList = Array.from(new Set(warlordIdList));
   log("battleList", battleList);
@@ -155,6 +271,8 @@ async function importBattle() {
     warlordIdMap[value["武将ID"]] = key;
   });
   log("warlordIdMap", warlordIdMap);
+
+  loading(`対戦 ${blockBattleDataList.length}件 登録中`);
 
   // 使用カードの既存データを取得
   const cardIdList = Object.keys(cardMap);
@@ -181,8 +299,8 @@ async function importBattle() {
   log("cardIdMap", cardIdMap);
 
   // 対戦の既存データを取得
-  const battleRecords = await getRecords("対戦", "対戦ID", battleList.map(e => e.fields["対戦ID"]));
-  const battleRecordIdList = Object.values(battleRecords).map(e => e["対戦ID"]);
+  battleRecords = await getRecords("対戦", "対戦ID", battleList.map(e => e.fields["対戦ID"]));
+  battleRecordIdList = Object.values(battleRecords).map(e => e["対戦ID"]);
 
   // 対戦が存在しない場合は登録
   const newBattleList = battleList.filter(e => !battleRecordIdList.includes(e.fields["対戦ID"]));
@@ -205,27 +323,12 @@ async function importBattle() {
   return newBattleList.length / 2;
 }
 
-async function collectBattleInfo(blockBattle, date) {
-  log("collect battle info", date);
-  const time = findElement(blockBattle, ".//*[contains(@class,'battle_list_time')]").textContent;
-  const myname = findElement(blockBattle, ".//*[contains(@class,'battle_list_mydata')]//*[contains(@class,'battle_list_name')]//span").textContent;
-  const myleague = findElement(blockBattle, ".//*[contains(@class,'battle_list_mydata')]//*[contains(@class,'battle_list_league')]//img").alt;
-  const enemyname = findElement(blockBattle, ".//*[contains(@class,'battle_list_enemydata')]//*[contains(@class,'battle_list_name')]//span").textContent;
-  const enemyleague = findElement(blockBattle, ".//*[contains(@class,'battle_list_enemydata')]//*[contains(@class,'battle_list_league')]//img").alt;
-  const isWin = findElement(blockBattle, ".//*[contains(@class,'battle_list_result')]//img").src.endsWith('icon_1_s.png');
+async function collectBattleInfo(date, {time, datetime, myid, myname, myleague, enemyid, enemyname, enemyleague, isWin, battleUrl}) {
+  log(`collect battle info ${date} ${time}`);
 
-  await sleep(1000);
-  const battleUrl = findElement(blockBattle, ".//a[contains(@class,'battle_list_base')]").href;
   const cardInfo = await collectBattleCardInfo(battleUrl);
   log("cardInfo", cardInfo);
 
-  const datetime = new Date(Date.parse(`${date} ${time.replace(/翌/,"")}`));
-  if (time.startsWith("翌")) {
-    datetime.setDate(datetime.getDate() + 1);
-  }
-
-  const datetimeISO = datetime.toISOString();
-  const datetimeString = datetime.toLocaleString().replace(/[ /:]/g,'');
   const dateString = datetime.toLocaleDateString().replace(/[/]/g,'');
 
   const cardMap = {};
@@ -259,23 +362,23 @@ async function collectBattleInfo(blockBattle, date) {
     battleList: [
       {
         fields: {
-          "対戦ID": myname + datetimeString,
-          "対戦日時": datetimeISO,
+          "対戦ID": myid,
+          "対戦日時": datetime.toISOString(),
           "階級": myleague,
           "勝敗": (isWin ? "勝利" : "敗北"),
           "プレイヤー": myname,
-          "相手対戦ID": enemyname + datetimeString,
+          "相手対戦ID": enemyid,
           "使用カード": cardInfo.myWarlordIdList.map(warlordId => myleague + warlordId + dateString),
         },
       },
       {
         fields: {
-          "対戦ID": enemyname + datetimeString,
-          "対戦日時": datetimeISO,
+          "対戦ID": enemyid,
+          "対戦日時": datetime.toISOString(),
           "階級": enemyleague,
           "勝敗": (isWin ? "敗北" : "勝利"),
           "プレイヤー": enemyname,
-          "相手対戦ID": myname + datetimeString,
+          "相手対戦ID": myid,
           "使用カード": cardInfo.enemyWarlordIdList.map(warlordId => enemyleague + warlordId + dateString),
         },
       }
@@ -462,5 +565,5 @@ function toArrayBuffer(buffer) {
 }
 
 main()
-  .then(() => {alert("登録しました。")})
+  .then(result => {if (result) alert("登録しました。")})
   .catch(error => {throw error});
