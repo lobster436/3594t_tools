@@ -1,6 +1,6 @@
 // 実行中チェック
 if (typeof _3594t_tools_running === "undefined") {
-  _3594t_tools_running = false;
+  _3594t_tools_running = null;
 }
 if (_3594t_tools_running) {
   log("3594t_tools is running.");
@@ -162,15 +162,17 @@ async function importBattleAllDays(loading) {
       'z-index: 2',
     ].join(";");
     document.body.appendChild(iframe);
-    await sleep(3000);
 
-    const contentDocument = iframe.contentDocument || iframe.contentWindow.document;
+    let contentDocument;
+    while (!contentDocument) {
+      await sleep(1000);
+      contentDocument = iframe.contentDocument || iframe.contentWindow.document;
+    }
     const script = contentDocument.createElement('script');
     script.src = 'https://behiro.github.io/3594t_tools/bookmarklet/main.js?_=' + now;
     contentDocument.body.appendChild(script);
   
-    await sleep(3000);
-    while (iframe.contentWindow._3594t_tools_running) {
+    while (iframe.contentWindow._3594t_tools_running !== false) {
       await sleep(1000);
     }
     document.body.removeChild(iframe);
