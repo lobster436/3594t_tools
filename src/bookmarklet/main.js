@@ -15,13 +15,14 @@ if (typeof require === "undefined") {
   element.src = 'https://cdn.jsdelivr.net/npm/airtable@0.11.1/build/airtable.browser.min.js';
   document.body.appendChild(element);
 }
-  while (typeof require === "undefined") {
+while (typeof require === "undefined") {
   await sleep(1000);
 }
 
 const secrets = await decode(secret)
 const secretKeyName = Object.keys(secrets)[0]
 const baseName = Object.keys(secrets)[1]
+log(`base=${secrets[baseName]}`);
 const Airtable = require('airtable');
 const base = new Airtable({apiKey: secrets[secretKeyName]}).base(secrets[baseName]);
 
@@ -436,6 +437,7 @@ function getRecords(table, fieldName, idList, selectFields) {
     }, function done(err) {
         if (err) {
           console.error(err);
+          error("データアクセスができませんでした。しばらくお待ち下さい。");
         }
         log("getRecords", table, result);
         resolve(result);
